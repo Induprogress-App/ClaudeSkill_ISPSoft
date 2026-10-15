@@ -3,7 +3,7 @@
 Uzycie:
   python zbuduj_skill.py [--out _ns_dist] [--ignoruj-slowa]
 
-Paczka = zawartosc katalogu ispsoft/ 1:1 (SKILL.md, INSTALACJA.md, isp_codec.py, README.md, FORMAT_ISP.md,
+Paczka = zawartosc katalogu ispsoft/ 1:1 (SKILL.md, INSTALACJA.md, isp_codec.py, README.md, FORMAT_ISP.md, JEZYK_*.md,
 PLC_start/*.md) plus WERSJA.txt. Pomijane sa: __pycache__, _autogen, *.pyc i wszystko, co zaczyna sie od _ns_.
 Biblioteki blokow funkcyjnych nie sa dolaczane - kazdy trzyma wlasne w folderze bibliotek ([lib]).
 

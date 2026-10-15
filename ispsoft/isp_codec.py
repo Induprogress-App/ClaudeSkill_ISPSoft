@@ -30,16 +30,20 @@ Uzycie:
   python isp_codec.py add-var PROJEKT.isp TABELA|POU NAZWA TYP [--adres D100] [--init 5]
                               [--komentarz "..."] [--klasa VAR_INPUT] [--nowa-tabela]
       Dodaja elementy w _autogen (--encode zapisuje od razu do .isp). Szczegoly: python isp_codec.py POLECENIE -h
+  python isp_codec.py list PROJEKT.isp [WZORZEC ...] [--typ PRG,FB,DUT,GVL]
+      Spis elementow projektu: nazwa, rodzaj, jezyk/typ, rozmiar, zadanie, plik w _autogen.
+      WZORZEC: fragment nazwy albo wzorzec z * i ? (np. Komunikacja*), bez rozrozniania wielkosci liter.
   python isp_codec.py find-var PROJEKT.isp NAZWA
       Deklaracje zmiennej, miejsca zmiany wartosci, uzycie w warunkach i pozostale odczyty (ST i LD).
   python isp_codec.py copy-fb ZRODLO.isp CEL.isp FB [FB ...] [--folder F] [--globalne] [--nadpisz] [--dry-run]
       Kopiuje bloki funkcyjne z zaleznosciami (typy, FB uzyte jako instancje) do innego projektu.
-  python isp_codec.py list-lib
+  python isp_codec.py list-lib [WZORZEC ...]
       Projekty i bloki funkcyjne w folderze bibliotek. W kazdym poleceniu zamiast sciezki do .isp mozna podac
       [lib]/NAZWA.isp - folder bibliotek to %ISPSOFT_LIB% albo %USERPROFILE%/.claude/ispsoft/biblioteki.
-  python isp_codec.py info PROJEKT.isp|MODEL
+  python isp_codec.py info PROJEKT.isp|MODEL [--jezyk ST|LD]
       Dane projektu i cala wiedza o sterowniku z folderu %USERPROFILE%/.claude/ispsoft/PLC
       (pliki AS.md, AS228.md, AS228P.md... - od ogolnych do szczegolowych).
+      --jezyk pomija sekcje o drugim jezyku (naglowki zawierajace slowo LD albo ST).
   python isp_codec.py decode-txt PLIK.isp|.pnt [WYJSCIE.txt]
   python isp_codec.py encode-txt WZORZEC.isp TEKST.txt WYJSCIE.isp
       Caly projekt jako jeden plik tekstowy (do porownan i diagnostyki).
@@ -966,14 +970,86 @@ def print_find_var(project, name):
     out = _find_var(project, name)
     titles = (('deklaracje', 'Deklaracje'), ('zapis', 'Zmiana wartosci'), ('warunek', 'Uzycie w warunkach'),
               ('odczyt', 'Pozostale odczyty'), ('wywolanie', 'Wywolania (FB)'))
-    print('Zmienna: %s' % name)
-    for key, title in titles:
-        if key == 'wywolanie' and not out[key]:
-            continue
-        print('\n%s (%d):' % (title, len(out[key])))
-        for line in out[key] or ['-']:
-            print('  ' + line)
+    print('Zmienna %s (sciezki wzgledem %s):' % (name, project.folder))
+    if not any(out.values()):
+        print('  brak deklaracji i wystapien')
+    for key, title in titles:  # puste kategorie pomijane - krotszy wynik
+        if out[key]:
+            print('%s (%d):' % (title, len(out[key])))
+            for line in out[key]:
+                print('  ' + (line if len(line) <= 140 else line[:137] + '...'))
     return out
+
+
+# --- spis elementow projektu (list) -----------------------------------------
+
+LIST_KINDS = ('PRG', 'FB', 'DUT', 'GVL')
+DUT_KINDS = {'0': 'STRUCT', '1': 'ENUM', '2': 'UNION'}
+
+
+def name_filter(patterns):
+    """Wzorce nazw bez rozrozniania wielkosci liter: z * lub ? - dopasowanie calej nazwy, bez nich - fragment."""
+    import fnmatch
+    pats = [p.upper() for p in patterns or [] if p]
+    def match(name):
+        n = name.upper()
+        return not pats or any(fnmatch.fnmatchcase(n, p) if ('*' in p or '?' in p) else p in n for p in pats)
+    return match
+
+
+def _parse_kinds(text):
+    kinds = [k.strip().upper() for k in (text or '').replace(';', ',').split(',') if k.strip()]
+    wrong = [k for k in kinds if k not in LIST_KINDS]
+    if wrong:
+        raise ProjectError('nieznany rodzaj %s (dostepne: %s)' % (', '.join(wrong), ', '.join(LIST_KINDS)))
+    return kinds or list(LIST_KINDS)
+
+
+def list_rows(project, kinds, patterns):
+    """Wiersze (nazwa, rodzaj, jezyk/typ, rozmiar, zadanie, plik) w kolejnosci drzewa projektu."""
+    match, rows = name_filter(patterns), []
+    tasks = {}
+    for block in re.findall(r'^\[TASK_S\]\r\n(.*?)^\[TASK_E\]\r\n', project.read('zadania.txt'), re.M | re.S):
+        tid = re.search(r'^T_ID=(\d+)\r\n', block, re.M).group(1)
+        for prg in re.findall(r'^T_PName=(.*)\r\n', block, re.M):
+            tasks.setdefault(prg, []).append('T' + tid)
+    for kind, _, _ in TREE_KINDS:
+        short = 'PRG' if kind == 'ProgramFolder' else 'FB'
+        if short not in kinds:
+            continue
+        for typ, name, _ in project.tree[kind]:
+            if typ == '-1' or not match(name):
+                continue
+            lang, _, code, code_rel, _ = project.pou_source(name)
+            size = ('%d net' % code.count('<NETWORK_START>')) if lang == 'LD' else '%d lin' % code.count('\r\n')
+            task = ','.join(tasks.get(name, [])) or '-' if short == 'PRG' else ''
+            rows.append((name, short, lang, size, task, code_rel))
+    if 'DUT' in kinds and os.path.isdir(project._path('typy')):
+        for f in sorted(os.listdir(project._path('typy')), key=str.upper):
+            text = project.read('typy/' + f)
+            name = re.search(r'^DutName=(.*)\r\n', text, re.M).group(1)
+            if match(name):
+                dtype = re.search(r'^DutType=(\d+)\r\n', text, re.M)
+                body = text.split('DutContent=\r\n', 1)[-1]
+                rows.append((name, 'DUT', DUT_KINDS.get(dtype.group(1) if dtype else '', '?'),
+                             '%d lin' % body.count('\r\n'), '', 'typy/' + f))
+    if 'GVL' in kinds:
+        for table, rel in project.global_tables().items():
+            if match(table):
+                count = len(re.findall(r'^\{\r\n\w+\r\n\w+\r\n', project.read(rel), re.M))
+                rows.append((table, 'GVL', '', '%d zm' % count, '', rel))
+    return rows
+
+
+def print_list(project, kinds, patterns):
+    rows = list_rows(project, kinds, patterns)
+    print('%s: %d elementow (%s%s)' % (project.folder, len(rows), ','.join(kinds),
+                                       ', wzorzec: ' + ' '.join(patterns) if patterns else ''))
+    if rows:
+        widths = [max(len(r[i]) for r in rows) for i in range(5)]
+        for r in rows:
+            print(' '.join(r[i].ljust(widths[i]) for i in range(5) if widths[i]) + ' ' + r[5])
+    return rows
 
 
 # --- kopiowanie blokow funkcyjnych z zaleznosciami (copy-fb) ----------------
@@ -1124,7 +1200,7 @@ def copy_fbs(src, dst, names, folder='', overwrite=False, dry_run=False, copy_gl
         plan.append(('globalna', '%s : %s%s (uzywa: %s)' % (g['name'], g['type'], ' @' + g['addr'] if g['addr'] else '',
                                                            ', '.join(sorted(users))), state))
 
-    report = ['%-9s %-60s %s' % row for row in plan]
+    report = ['%s %s: %s' % row for row in plan]
     report += ['typ spoza projektu (biblioteka ISPSoft?): ' + u for u in unknown]
     if problems:
         raise ProjectError('kopiowanie przerwane:\n  ' + '\n  '.join(report + problems))
@@ -1240,13 +1316,17 @@ def project_info(isp_path):
         lines.append('  zadanie %s: %s' % (kind, ', '.join(progs) or '(brak programow)'))
     pous = re.findall(r'^<POU>\nP_Name=(.*)\n(?:.*\n)*?P_type=(\d)\n(?:.*\n)*?P_Lang=(\d+)', text, re.M)
     langs = {v: k for k, v in LANGS.items()}
+    counts = []  # same liczby - nazwy i pliki podaje polecenie list
     for typ, title in (('0', 'programy'), ('1', 'bloki funkcyjne')):
-        items = ['%s (%s)' % (n, langs.get(l, 'jezyk %s' % l)) for n, t, l in pous if t == typ]
-        lines.append('  %s (%d): %s' % (title, len(items), ', '.join(items) or '-'))
-    duts = re.findall(r'^DutName=(.*)$', text, re.M)
-    lines.append('  typy (%d): %s' % (len(duts), ', '.join(duts) or '-'))
-    tables = re.findall(r'^TableName=(.*)$', text, re.M)
-    lines.append('  tabele zmiennych globalnych: %s' % (', '.join(tables) or '-'))
+        per_lang = {}
+        for _, t, l in pous:
+            if t == typ:
+                per_lang[langs.get(l, 'jezyk %s' % l)] = per_lang.get(langs.get(l, 'jezyk %s' % l), 0) + 1
+        counts.append('%s %d%s' % (title, sum(per_lang.values()), ' (%s)' % ', '.join(
+            '%s %d' % kv for kv in sorted(per_lang.items())) if per_lang else ''))
+    counts.append('typy %d' % len(re.findall(r'^DutName=', text, re.M)))
+    counts.append('tabele zmiennych globalnych %d' % len(re.findall(r'^TableName=', text, re.M)))
+    lines.append('  ' + ', '.join(counts) + ' - nazwy i pliki: list')
     ranges = [(d, up, lo) for up, lo, d in
               re.findall(r'^\[\w+_RANGE\]\n<UPPER>(\d+)\n<LOWER>(\d+)\n<(\w+)>', text, re.M)]
     if ranges:
@@ -1257,7 +1337,29 @@ def project_info(isp_path):
     return field('Prj_DT'), lines
 
 
-def print_info(target):
+def filter_language(text, lang):
+    """Usuwa z tekstu .md sekcje (## / ###) o drugim jezyku: przy ST naglowki z 'LD', przy LD z 'ST'."""
+    other = {'ST': 'LD', 'LD': 'ST'}.get((lang or '').upper())
+    if not other:
+        return text, []
+    out, skipped, skip_level = [], [], 0
+    for line in text.split('\n'):
+        h = re.match(r'^(#{2,6})\s+(.*)', line)
+        if h:
+            level = len(h.group(1))
+            if skip_level and level > skip_level:
+                continue
+            skip_level = 0
+            if re.search(r'\b%s\b' % other, h.group(2)):
+                skip_level = level
+                skipped.append(h.group(2).strip())
+                continue
+        if not skip_level:
+            out.append(line)
+    return '\n'.join(out), skipped
+
+
+def print_info(target, lang=''):
     if target.lower().endswith('.isp') or os.path.isfile(target):
         model, lines = project_info(target)
         print('\n'.join(lines))
@@ -1270,8 +1372,11 @@ def print_info(target):
             os.path.join(plc_dir(), re.match(r'[A-Za-z]*', model or 'AS').group(0) + '.md'),
             os.path.join(plc_dir(), (model or 'MODEL') + '.md')))
     for path in files:
+        text, skipped = filter_language(open(path, encoding='utf-8-sig').read().rstrip(), lang)
         print('\n===== %s =====' % os.path.basename(path))
-        print(open(path, encoding='utf-8-sig').read().rstrip())
+        print(text.rstrip())
+        if skipped:
+            print('(pominieto sekcje: %s)' % '; '.join(skipped))
 
 
 def resolve_isp(path):
@@ -1293,7 +1398,8 @@ def resolve_isp(path):
                        % (rest, base, ', '.join(candidates), candidates[-1]))
 
 
-def list_lib():
+def list_lib(patterns=None):
+    match = name_filter(patterns)
     base = lib_dir()
     if not os.path.isdir(base):
         print('Folder bibliotek %s nie istnieje. Utworz go i zapisz w nim projekt ISPSoft z co najmniej jednym '
@@ -1313,10 +1419,10 @@ def list_lib():
         raw = decode(open(path, 'rb').read())
         text = raw.decode(codepage(raw))
         folders = _pou_folders(text)
-        fbs = sorted('/'.join(sub + [name]) for name, (root, sub) in folders.items() if root == 'bloki_funkcyjne')
-        print('\n[lib]/%s  (%d blokow funkcyjnych)' % (os.path.basename(path), len(fbs)))
-        for fb in fbs:
-            print('  ' + fb)
+        fbs = sorted('/'.join(sub + [name]) for name, (root, sub) in folders.items()
+                     if root == 'bloki_funkcyjne' and match(name))
+        if fbs or not patterns:
+            print('[lib]/%s (%d FB): %s' % (os.path.basename(path), len(fbs), ', '.join(fbs) or '-'))
 
 
 # --- linia polecen ----------------------------------------------------------
@@ -1327,7 +1433,7 @@ def _finish(args, message):
         size = encode_from_dir(args.isp)
         print('bez zmian' if size is None else 'zapisano %s %d bajtow' % (args.isp, size))
     else:
-        print('zmiany sa w _autogen - zapisz je do .isp: python isp_codec.py encode "%s"' % args.isp)
+        print('(zmiany w _autogen; do .isp: encode)')
 
 
 def main(argv):
@@ -1375,7 +1481,13 @@ def main(argv):
     s.add_argument('--encode', action='store_true', help='od razu zapisz zmiany do .isp')
     s = sub.add_parser('info', help='dane projektu i wszystkie informacje o jego sterowniku z folderu PLC')
     s.add_argument('target', help='PROJEKT.isp albo nazwa modelu, np. AS228P')
+    s.add_argument('--jezyk', default='', help='ST albo LD: z plikow PLC pomin sekcje o drugim jezyku')
+    s = sub.add_parser('list', help='spis programow, FB, typow i tabel zmiennych z plikami w _autogen')
+    s.add_argument('isp')
+    s.add_argument('wzorce', nargs='*', help='fragment nazwy albo wzorzec z * i ?, np. Komunikacja* (bez wielkosci liter)')
+    s.add_argument('--typ', default='', help='rodzaje oddzielone przecinkami: PRG, FB, DUT, GVL (domyslnie wszystkie)')
     s = sub.add_parser('list-lib', help='projekty i bloki funkcyjne w folderze bibliotek [lib]')
+    s.add_argument('wzorce', nargs='*', help='fragment nazwy FB albo wzorzec z * i ?')
     s = sub.add_parser('find-var', help='gdzie zmienna jest zadeklarowana, zmieniana i uzywana w warunkach')
     s.add_argument('isp')
     s.add_argument('name', help='nazwa zmiennej, mozna z czlonem struktury, np. Dane.Silnik1 albo Zawor1.Otwarty')
@@ -1431,9 +1543,11 @@ def main(argv):
             if not args.dry_run:
                 _finish(args, 'skopiowano do %s' % args.isp)
         elif args.cmd == 'info':
-            print_info(resolve_isp(args.target))
+            print_info(resolve_isp(args.target), args.jezyk)
+        elif args.cmd == 'list':
+            print_list(Project(args.isp), _parse_kinds(args.typ), args.wzorce)
         elif args.cmd == 'list-lib':
-            list_lib()
+            list_lib(args.wzorce)
         elif args.cmd == 'find-var':
             print_find_var(Project(args.isp), args.name)
         elif args.cmd == 'add-var':

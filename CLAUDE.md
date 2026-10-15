@@ -12,6 +12,7 @@ kod po swojemu.
 | `ispsoft/isp_codec.py` | całe narzędzie: jeden plik, tylko biblioteka standardowa Pythona 3 |
 | `ispsoft/README.md` | instrukcja poleceń dla użytkowników |
 | `ispsoft/FORMAT_ISP.md` | opis formatu pliku `.isp` – wszystko, co ustalono o zapisie projektu |
+| `ispsoft/JEZYK_ST.md`, `ispsoft/JEZYK_LD.md` | zapis kodu ST i LD w `_autogen` – skill czyta tylko plik języka, w którym pracuje |
 | `ispsoft/PLC_start/*.md` | pliki startowe wiedzy o sterownikach; `info` czyta pliki, których nazwa jest początkiem nazwy modelu (`AS.md` seria, `AS228.md` rodzina AS228P/AS228R, `AS228P.md` jeden model) |
 | `zbuduj_skill.py` | pakuje `ispsoft/` do `_ns_dist/ispsoft.zip` (+ `WERSJA.txt`) |
 | `aktualizuj_skill.py` | synchronizuje pliki sterowników, buduje paczkę i instaluje skill lokalnie |
@@ -70,7 +71,7 @@ Dane użytkownika (poza repozytorium, nie zależą od jego położenia):
 - Każda zmiana formatu musi zachować bezstratność: `decode` sprawdza, że rozkład i złożenie dają tę samą treść.
 - Przy edycji kodu skryptami uważać na sekwencje `\r\n` i `\` w napisach – bezpieczniej Edit/Write
   albo surowe napisy w pliku skryptu.
-- Nowe ustalenia o formacie dopisywać do `ispsoft/FORMAT_ISP.md`, nowe polecenia do `ispsoft/README.md`
+- Nowe ustalenia o formacie dopisywać do `ispsoft/FORMAT_ISP.md` (o zapisie kodu – do `JEZYK_ST.md` / `JEZYK_LD.md`), nowe polecenia do `ispsoft/README.md`
   i `ispsoft/SKILL.md`.
 
 ## Otwarte sprawy
