@@ -16,6 +16,7 @@ Wymaga tylko Pythona 3 – uruchamiaj je jako `python "<katalog skilla>/isp_code
 | czytasz lub zmieniasz kod LD (`.ld`) | `JEZYK_LD.md` |
 | potrzebujesz opcji polecenia, bibliotek `[lib]`, układu `_autogen` | `README.md` (albo `POLECENIE -h`) |
 | inne pliki `_autogen` (tabele, typy, zadania, drzewo) albo błąd narzędzia | `FORMAT_ISP.md` |
+| sieć CANopen (`.cop`: węzły, Auto SDO, PDO) – narzędzie `cop_codec.py` (`dump`, `decode`, `encode`, `check`) | `FORMAT_COP.md` |
 
 ## Zasady pracy
 0. **Na początku: `info PROJEKT.isp --jezyk ST`** (albo `LD` – język, w którym będziesz pracować; bez opcji obie

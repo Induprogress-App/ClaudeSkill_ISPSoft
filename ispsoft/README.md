@@ -81,6 +81,17 @@ python isp_codec.py add-var Projekt/Projekt.isp Liczenie licznik1 FB_Licznik
 python isp_codec.py add-var Projekt/Projekt.isp "Global Variables" Wynik INT --adres D100 --init 0 --encode
 ```
 
+## Sieć CANopen (`cop_codec.py`)
+Osobne narzędzie do plików `.cop` (konfiguracja sieci CANopen z CANopen Builder). Opis formatu: `FORMAT_COP.md`.
+```
+python cop_codec.py dump   projekt.cop               # czytelny opis: master, węzły, Auto SDO, PDO i mapowania
+python cop_codec.py decode projekt.cop [plik.json]   # rozkład na JSON (pomija puste węzły i puste sloty PDO)
+python cop_codec.py encode plik.json nowy.cop        # złożenie .cop (nie nadpisuje istniejącego pliku)
+python cop_codec.py check  projekt.cop               # test bezstratności: rozkład → złożenie = ten sam plik
+```
+W JSON można zmieniać m.in. nazwy, czasy heartbeat, wartości Auto SDO oraz mapowanie PDO (`slots[].map`);
+liczniki i liczby bajtów Tx/Rx narzędzie przelicza samo. Zmieniony plik trzeba sprawdzić w CANopen Builder.
+
 ## Biblioteki – zalecany przebieg (dla Claude i ludzi)
 - „Skopiuj blok X z biblioteki”: `list-lib X`; jeśli blok jest w kilku bibliotekach, wybierz (zapytaj), z której.
   Potem `copy-fb [lib]/NAZWA.isp PROJEKT.isp X --folder ... --dry-run`, sprawdź plan (także zmienne globalne,
