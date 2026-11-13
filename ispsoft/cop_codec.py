@@ -35,6 +35,10 @@ class CopError(Exception):
     pass
 
 
+UNI_MARK = bytes([0xFF, 0xFE, 0xFF])   # znacznik napisu Unicode w zapisie MFC
+UNI = False   # True: napisy w Unicode (znacznik FF FE FF, UTF-16LE) - zapis nowszego ISPSoft
+
+
 class Reader:
     def __init__(self, data):
         self.d = data
@@ -57,13 +61,24 @@ class Reader:
         return struct.unpack("<I", self.take(4))[0]
 
     def pstr(self):
+        if UNI:
+            if self.take(3) != UNI_MARK:
+                raise CopError("brak znacznika napisu Unicode (pozycja %d)" % (self.p - 3))
+            n = self.u8()
+            if n == 255:
+                raise CopError("napis dluzszy niz 254 znaki (nieobslugiwane)")
+            return self.take(2 * n).decode("utf-16-le")
         n = self.u8()
         return self.take(n).decode(CP)
 
 
 def pstr(s):
+    if UNI:
+        if len(s) > 254:
+            raise CopError("napis za dlugi: %r" % s)
+        return UNI_MARK + bytes([len(s)]) + s.encode("utf-16-le")
     b = s.encode(CP)
-    if len(b) > 255:
+    if len(b) > 254:
         raise CopError("napis za dlugi: %r" % s)
     return bytes([len(b)]) + b
 
@@ -146,10 +161,14 @@ def parse_node(r, k, first):
 
 
 def parse(data):
+    global UNI
+    UNI = data[:3] == UNI_MARK
     r = Reader(data)
-    m = {}
-    hdr = r.take(MASTER_HB_POS)
-    m["hdr"] = hx(hdr)
+    m = {"unicode": UNI}
+    m["title"] = r.pstr()
+    m["hdr1"] = hx(r.take(6))
+    m["hdr_strs"] = [r.pstr() for _ in range(6)]
+    m["hdr2"] = hx(r.take(27))
     m["heartbeat_ms"] = r.u32()
     m["name"] = r.pstr()
     m["flag"] = r.u8()
@@ -191,7 +210,7 @@ def build_slot(sl, tx):
             m = allm[e]
             out += struct.pack("<BBH", m["bits"], m.get("sub", 0), m["index"]) + pstr(m.get("name", ""))
         else:
-            out += b"\0\0\0\0\0"
+            out += bytes(4) + pstr("")
     return bytes(out)
 
 
@@ -240,8 +259,13 @@ def fix_trail(n):
 
 
 def build(model):
+    global UNI
     m = model["master"]
-    out = bytearray(bytes.fromhex(m["hdr"]))
+    UNI = bool(m.get("unicode", False))
+    out = bytearray(pstr(m["title"]) + bytes.fromhex(m["hdr1"]))
+    for t in m["hdr_strs"]:
+        out += pstr(t)
+    out += bytes.fromhex(m["hdr2"])
     out += struct.pack("<I", m["heartbeat_ms"]) + pstr(m["name"])
     out += bytes([m["flag"], m["baud_code"]]) + struct.pack("<II", m["sync_cob"], m["cycle_ms"])
     out += bytes([m["work_mode"]]) + pstr(m["ident"])

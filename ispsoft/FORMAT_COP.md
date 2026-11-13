@@ -8,15 +8,22 @@ CANopen Builder; `check` (rozkład → złożenie = ten sam plik) przechodzi na 
 układ, którego tu nie opisano – wtedy `check` zgłosi błąd; nie edytuj takiego pliku.
 
 ## Zapis ogólny
-Strumień binarny w stylu MFC: liczby little-endian, napis = 1 bajt długości + znaki (strona kodowa 1250).
+Strumień binarny w stylu MFC: liczby little-endian. Napis ma dwa warianty zapisu, a cały plik używa jednego z nich:
+- ANSI (starszy zapis): 1 bajt długości + znaki (strona kodowa 1250); plik zaczyna się od bajtu `0F`,
+- Unicode (zapis nowszego ISPSoft): `FF FE FF` + 1 bajt długości (liczba znaków) + znaki UTF-16LE; plik zaczyna się
+  od `FF FE FF 0F`. Pusty napis to `FF FE FF 00`, więc plik jest ok. 1,5 raza większy.
+Narzędzie rozpoznaje wariant po początku pliku i przy składaniu zachowuje go (`master.unicode`).
 Plik ma stałą liczbę rekordów (128 węzłów, numer węzła = numer rekordu 0..127) i stałe pojemności tablic
 (nieużywane miejsce jest wypełnione zerami), więc rozmiar pliku zmienia się tylko o długość napisów.
 
 ## Nagłówek i master
 | Pole | Zapis |
 |---|---|
-| napis `CANopen Builder` i 0x25 bajtów | nagłówek (zachowywany bez zmian jako `hdr`) |
-| czas heartbeat mastera (ms) | u32, bajt 0x37 pliku |
+| napis `CANopen Builder` (`title`) | napis |
+| `hdr1` | 6 bajtów `25 03 20 20 07 02` |
+| `hdr_strs` | 6 pustych napisów |
+| `hdr2` | 27 bajtów, zachowywane bez zmian |
+| czas heartbeat mastera (ms) | u32 |
 | nazwa mastera | napis |
 | flaga | u8 (1) |
 | kod prędkości | u8; 6 = 1 Mbps (zgodny z `AS_FCOPM_RATE`), pozostałych kodów nie sprawdzono |
@@ -43,7 +50,7 @@ Kolejno (rekord 0 ma na początku 9 bajtów `pre_vendor`, pozostałe 24; oba zac
 | tryb kontroli błędów | u32; 1 = Heartbeat |
 | nazwa węzła | napis |
 | nazwa EDS | napis (`99999` dla węzła bez pliku EDS) |
-| `flag_a` | u8; 1 dla węzła skonfigurowanego, 0 dla pustego |
+| `flag_a` | u8; 1 dla węzła skonfigurowanego, 0 dla pustego. Hipoteza: 1 = węzeł jest na liście przypisanej do rejestrów sterownika („Node List”); węzeł skonfigurowany, ale nieprzypisany, ma 0 |
 | `flag_b` | u8; 0 albo 2, zależy od historii edycji węzła – zachowywany, nie interpretowany |
 | Auto SDO | licznik u8, potem 20 wpisów po 20 bajtów (pojemność 20) |
 | `pre_pdo` | 13 bajtów, zachowywane bez zmian (np. `01 96 00 01 …` w węźle skonfigurowanym, zera w pustym) |
@@ -77,8 +84,9 @@ Pusty slot ma COB-ID 0, typ 255 i indeks 0 albo 0xFFFF (zależnie od węzła).
 ### Koniec rekordu (`trail`)
 Pierwsze 16 bajtów: `u32 a, u32 a, u32 bajty_Tx, u32 bajty_Rx`. `bajty_Tx` i `bajty_Rx` to suma bitów
 mapowań wszystkich slotów Tx / Rx podzielona przez 8 (narzędzie przelicza je przy składaniu). Pole `a` jest
-powiązane z rozmieszczeniem danych węzłów w obrazie wejść/wyjść (u kolejnych węzłów 16, 36, 56 – krok 20) –
-nie rozszyfrowane, zachowywane bez zmian. Dalej stałe: u32 `0x168`, bajty `01 01 14 00 00 00`, u32 10, trzy razy u32 10000,
+powiązane z rozmieszczeniem danych węzłów w obrazie wejść (u kolejnych przypisanych węzłów 16, 36, 56: koniec
+bloku danych Tx węzła, bloki co 20 bajtów = 10 słów D, a dane Tx zajmują 16 B); 0 u węzła nieprzypisanego.
+Węzeł skopiowany z innego może mieć odziedziczone, nieaktualne `a`. Zachowywane bez zmian. Dalej stałe: u32 `0x168`, bajty `01 01 14 00 00 00`, u32 10, trzy razy u32 10000,
 zera, u32 1, u32 0x80 oraz liczby zmiennoprzecinkowe 10000.0 / 1.0 / 1.0 / 10000.0 (granice parametrów, znaczenie nie zbadane).
 
 ## Czego nie ma w `.cop`
