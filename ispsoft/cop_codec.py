@@ -5,7 +5,8 @@
 Tylko biblioteka standardowa Pythona 3. Opis formatu: FORMAT_COP.md.
 
 Polecenia:
-  dump   plik.cop                 czytelny opis sieci (master, wezly, Auto SDO, PDO)
+  dump   plik.cop [D_zapisu D_odczytu]   czytelny opis sieci (master, wezly, Auto SDO, PDO, mapowanie na rejestry);
+                                 z poczatkami obszarow, np. 25032 24032, podaje adresy D
   decode plik.cop [plik.json]     rozklad na JSON (domyslnie plik.cop.json)
   encode plik.json plik.cop       zlozenie pliku .cop z JSON
   check  plik.cop                 test: rozklad -> zlozenie daje identyczny plik
@@ -181,7 +182,11 @@ def parse(data):
     for k in range(N_NODES):
         n = parse_node(r, k, k == 0)
         last = (k == N_NODES - 1)
-        n["trail"] = hx(r.take(len(data) - r.p if last else TRAIL_LEN))
+        t = r.take(len(data) - r.p if last else TRAIL_LEN)
+        # 4 pierwsze liczby koncowki: przesuniecie danych wezla w obrazie wejsc (odczyt, od D24xxx) i wyjsc
+        # (zapis, od D25xxx) w bajtach, potem liczba bajtow Tx i Rx (wyliczane przy skladaniu)
+        n["in_offset"], n["out_offset"] = struct.unpack("<II", t[:8])
+        n["trail"] = hx(t[16:])
         nodes.append(n)
     return {"master": m, "nodes": nodes}
 
@@ -248,14 +253,10 @@ def build_node(n, first):
 
 
 def fix_trail(n):
-    """Wyliczane w koncowce: liczba bajtow Tx i Rx (offset 8 i 12)."""
-    t = bytearray(bytes.fromhex(n["trail"]))
-    if len(t) >= 16:
-        tx = sum(slot_bits(n["slots"][s]) for s in range(0, N_PDO_SLOTS, 2)) // 8
-        rx = sum(slot_bits(n["slots"][s]) for s in range(1, N_PDO_SLOTS, 2)) // 8
-        t[8:12] = struct.pack("<I", tx)
-        t[12:16] = struct.pack("<I", rx)
-    return bytes(t)
+    """Koncowka rekordu: przesuniecia (z modelu), liczba bajtow Tx i Rx (wyliczane), stala reszta."""
+    tx = sum(slot_bits(n["slots"][s]) for s in range(0, N_PDO_SLOTS, 2)) // 8
+    rx = sum(slot_bits(n["slots"][s]) for s in range(1, N_PDO_SLOTS, 2)) // 8
+    return struct.pack("<IIII", n["in_offset"], n["out_offset"], tx, rx) + bytes.fromhex(n["trail"])
 
 
 def build(model):
@@ -298,7 +299,7 @@ def default_node(k):
         "name": "Unknow Device", "eds_name": "99999", "flag_a": 0, "flag_b": 0,
         "auto_sdo": [], "pre_pdo": "00" * 13,
         "slots": [default_slot(s % 2 == 0, s // 2 + 1) for s in range(N_PDO_SLOTS)],
-        "trail": DEF_TRAIL,
+        "in_offset": 0, "out_offset": 0, "trail": DEF_TRAIL[32:],
     }
 
 
@@ -379,7 +380,11 @@ def txtype(t):
     return str(t)
 
 
-def dump_text(model):
+def dreg(base, off):
+    return "" if base is None else " = D%d" % (base + off // 2)
+
+
+def dump_text(model, base_out=None, base_in=None):
     L = []
     m = model["master"]
     L.append("MASTER: %s  baud %s (kod %d)  SYNC COB-ID %d  okres %d x1000us  heartbeat %d ms  tryb %d"
@@ -399,6 +404,8 @@ def dump_text(model):
                  "  guard %d ms  lifetime %d"
                  % (n["emergency_cob"], n["nodeguard_cob"], n["heartbeat"], n["producer_ms"], n["consumer_ms"],
                     n["guard_time_ms"], n["lifetime_factor"]))
+        L.append("  Mapowanie na rejestry: odczyt (Tx) +%d B%s, zapis (Rx) +%d B%s"
+                 % (n["in_offset"], dreg(base_in, n["in_offset"]), n["out_offset"], dreg(base_out, n["out_offset"])))
         if n["auto_sdo"]:
             L.append("  Auto SDO (%d):" % len(n["auto_sdo"]))
             for e in n["auto_sdo"]:
@@ -459,7 +466,9 @@ def main(argv):
             return 0 if ok else 2
         model = parse(data)
         if cmd == "dump":
-            sys.stdout.write(dump_text(model))
+            bo = int(argv[3]) if len(argv) > 3 else None
+            bi = int(argv[4]) if len(argv) > 4 else None
+            sys.stdout.write(dump_text(model, bo, bi))
             return 0
         out = argv[3] if len(argv) > 3 else argv[2] + ".json"
         if os.path.exists(out):

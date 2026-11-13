@@ -84,7 +84,7 @@ python isp_codec.py add-var Projekt/Projekt.isp "Global Variables" Wynik INT --a
 ## Sieć CANopen (`cop_codec.py`)
 Osobne narzędzie do plików `.cop` (konfiguracja sieci CANopen z CANopen Builder). Opis formatu: `FORMAT_COP.md`.
 ```
-python cop_codec.py dump   projekt.cop               # czytelny opis: master, węzły, Auto SDO, PDO i mapowania
+python cop_codec.py dump   projekt.cop [25032 24032]  # opis: master, węzły, Auto SDO, PDO; z początkami obszarów (zapis, odczyt) podaje adresy D
 python cop_codec.py decode projekt.cop [plik.json]   # rozkład na JSON (pomija puste węzły i puste sloty PDO)
 python cop_codec.py encode plik.json nowy.cop        # złożenie .cop (nie nadpisuje istniejącego pliku)
 python cop_codec.py check  projekt.cop               # test bezstratności: rozkład → złożenie = ten sam plik

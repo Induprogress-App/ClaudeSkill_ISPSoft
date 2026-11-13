@@ -50,7 +50,7 @@ Kolejno (rekord 0 ma na początku 9 bajtów `pre_vendor`, pozostałe 24; oba zac
 | tryb kontroli błędów | u32; 1 = Heartbeat |
 | nazwa węzła | napis |
 | nazwa EDS | napis (`99999` dla węzła bez pliku EDS) |
-| `flag_a` | u8; 1 dla węzła skonfigurowanego, 0 dla pustego. Hipoteza: 1 = węzeł jest na liście przypisanej do rejestrów sterownika („Node List”); węzeł skonfigurowany, ale nieprzypisany, ma 0 |
+| `flag_a` | u8; 1 dla węzła skonfigurowanego, 0 dla pustego; po przypisaniu węzła do rejestrów jest 1 (w pliku widziano węzeł z 0 przed przypisaniem) |
 | `flag_b` | u8; 0 albo 2, zależy od historii edycji węzła – zachowywany, nie interpretowany |
 | Auto SDO | licznik u8, potem 20 wpisów po 20 bajtów (pojemność 20) |
 | `pre_pdo` | 13 bajtów, zachowywane bez zmian (np. `01 96 00 01 …` w węźle skonfigurowanym, zera w pustym) |
@@ -81,21 +81,29 @@ Puste wpisy mapowania mają 5 bajtów (nazwa pusta). Wpis aktywny zajmuje 5 + d�
 mogą zawierać stare dane (pozostałość po usunięciu obiektu z PDO) – narzędzie zachowuje je w polu `stale_map`.
 Pusty slot ma COB-ID 0, typ 255 i indeks 0 albo 0xFFFF (zależnie od węzła).
 
-### Koniec rekordu (`trail`)
-Pierwsze 16 bajtów: `u32 a, u32 a, u32 bajty_Tx, u32 bajty_Rx`. `bajty_Tx` i `bajty_Rx` to suma bitów
-mapowań wszystkich slotów Tx / Rx podzielona przez 8 (narzędzie przelicza je przy składaniu). Pole `a` jest
-powiązane z rozmieszczeniem danych węzłów w obrazie wejść (u kolejnych przypisanych węzłów 16, 36, 56: koniec
-bloku danych Tx węzła, bloki co 20 bajtów = 10 słów D, a dane Tx zajmują 16 B); 0 u węzła nieprzypisanego.
-Węzeł skopiowany z innego może mieć odziedziczone, nieaktualne `a`. Zachowywane bez zmian. Dalej stałe: u32 `0x168`, bajty `01 01 14 00 00 00`, u32 10, trzy razy u32 10000,
-zera, u32 1, u32 0x80 oraz liczby zmiennoprzecinkowe 10000.0 / 1.0 / 1.0 / 10000.0 (granice parametrów, znaczenie nie zbadane).
+### Koniec rekordu (`trail`) i mapowanie na rejestry
+Pierwsze 16 bajtów: `u32 in_offset, u32 out_offset, u32 bajty_Tx, u32 bajty_Rx`.
+- `in_offset` – przesunięcie danych węzła (Tx, odczyt ze slave) w bajtach od początku obszaru wejść,
+- `out_offset` – przesunięcie danych węzła (Rx, zapis do slave) w bajtach od początku obszaru wyjść,
+- `bajty_Tx`, `bajty_Rx` – suma bitów mapowań slotów Tx / Rx podzielona przez 8 (narzędzie przelicza przy składaniu).
+
+Adres rejestru D węzła = początek obszaru + przesunięcie / 2. Sprawdzone na projekcie z początkami obszarów
+D25032 (zapis) i D24032 (odczyt): węzeł z przesunięciem 0 → D25032 / D24032, przesunięcie 16 → D25040 / D24040,
+36 → D25050 / D24050, 56 → D25060 / D24060, 1736 → D25900 / D24900; wejścia i wyjścia mają osobne przesunięcia
+(68 B → D25066, 72 B → D24068). Same początki obszarów (D25032, D24032) nie są zapisane w `.cop` – narzędzie
+pokazuje adresy D, gdy poda się je w `dump plik.cop 25032 24032`. Bloki węzłów układają się co 20 bajtów
+(10 słów) lub inaczej, jeśli przypisano je ręcznie.
+
+Dalej 60 bajtów stałych: u32 `0x168`, bajty `01 01 14 00 00 00`, u32 10, trzy razy u32 10000, zera, u32 1,
+u32 0x80 oraz liczby zmiennoprzecinkowe 10000.0 / 1.0 / 1.0 / 10000.0 (granice parametrów, znaczenie nie zbadane).
+W JSON są jako `trail` (bez pierwszych 16 bajtów); ostatni węzeł ma w pliku krótszą końcówkę.
 
 ## Czego nie ma w `.cop`
-Adresy rejestrów D, pod które ISPSoft odwzorowuje dane PDO (okno „Node List Setting”, tabele Output/Input), nie
-są zapisane jako liczby w pliku `.cop` – wyliczane są przy otwarciu. Zasada widoczna na zrzutach: dane każdego
-węzła (bajt L i H słowa) idą kolejno w obrębie PDO, w kolejności slotów i wpisów mapowania.
+Początków obszarów rejestrów (np. D25032 / D24032 z okna „Node List Setting”) w pliku nie znaleziono; zapisane
+są tylko przesunięcia węzłów (patrz wyżej).
 
 ## Do zbadania
-- dokładne znaczenie pola `a`, `flag_b`, `pre_pdo`, ostatniego bajtu `pre_vendor`,
+- dokładne znaczenie `flag_b`, `pre_pdo` i ostatniego bajtu `pre_vendor`; początki obszarów rejestrów,
 - numer węzła i pozostałe pola nagłówka mastera, inne kody prędkości,
 - węzeł w trybie Node Guarding (zamiast Heartbeat), tryb Slave mastera,
 - zależności: nowy węzeł dodany w GUI vs. wpis tylko w pliku (czy ISPSoft przyjmie ręcznie złożony `.cop`).
