@@ -140,14 +140,19 @@ def parse_node(r, k, first):
     if cnt > N_SDO:
         raise CopError("za duzo wpisow Auto SDO: %d" % cnt)
     sdo = []
+    stale = []
     for i in range(N_SDO):
         idx, sub, ln, z1, val, z2 = struct.unpack("<HHIIII", r.take(SDO_SIZE))
         if i < cnt:
             if z1 or z2:
                 raise CopError("Auto SDO: niezerowe pola rezerwowe (nieobslugiwane)")
             sdo.append({"index": idx, "sub": sub, "len": ln, "data": val})
-        elif idx or sub or ln or z1 or val or z2:
-            raise CopError("Auto SDO: niepuste wpisy poza licznikiem (nieobslugiwane)")
+        else:
+            stale.append({"index": idx, "sub": sub, "len": ln, "data": val, "r1": z1, "r2": z2})
+    while stale and not any(stale[-1].values()):
+        stale.pop()
+    if stale:
+        n["stale_sdo"] = stale   # stare wpisy za licznikiem (pozostalosc po usunieciu z Auto SDO)
     n["auto_sdo"] = sdo
     n["pre_pdo"] = hx(r.take(13))
     r.take(2)  # liczby skonfigurowanych PDO Tx/Rx - wyliczane przy skladaniu
@@ -234,10 +239,13 @@ def build_node(n, first):
     if len(sdo) > N_SDO:
         raise CopError("wezel %d: za duzo wpisow Auto SDO (max %d)" % (n["id"], N_SDO))
     out += bytes([len(sdo)])
+    allsdo = sdo + n.get("stale_sdo", [])
+    if len(allsdo) > N_SDO:
+        raise CopError("wezel %d: za duzo wpisow Auto SDO z stale_sdo (max %d)" % (n["id"], N_SDO))
     for i in range(N_SDO):
-        if i < len(sdo):
-            e = sdo[i]
-            out += struct.pack("<HHIIII", e["index"], e.get("sub", 0), e["len"], 0, e["data"], 0)
+        if i < len(allsdo):
+            e = allsdo[i]
+            out += struct.pack("<HHIIII", e["index"], e.get("sub", 0), e["len"], e.get("r1", 0), e["data"], e.get("r2", 0))
         else:
             out += bytes(SDO_SIZE)
     out += bytes.fromhex(n["pre_pdo"])

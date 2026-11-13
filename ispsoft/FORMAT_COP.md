@@ -62,6 +62,9 @@ Następny rekord zaczyna się od razu po `trail`, a jego `pre_vendor` i pola ide
 tych bajtów – dlatego odczyt jest sekwencyjny, a pola identyfikacyjne zaczynają się 57 bajtów przed nazwą węzła.
 
 ### Auto SDO
+Liczba wpisów jest zmienna (licznik u8, max 20), a rozmiar tablicy w pliku stały. Po usunięciu wpisów ISPSoft przesuwa
+następne i nie zeruje końca tablicy – stare wpisy zostają za licznikiem (narzędzie zachowuje je w `stale_sdo`).
+
 Dane wysyłane do węzła po nawiązaniu połączenia. Wpis (20 B): `u16 indeks, u16 podindeks, u32 długość (bajty),
 u32 0, u32 dane, u32 0`. Dla napędów Delta ASDA indeks `0x2000 + 0x100*grupa + numer` odpowiada parametrowi
 P<grupa>-<numer> (np. 0x220A = P2-10).
