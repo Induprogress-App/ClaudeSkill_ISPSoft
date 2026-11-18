@@ -81,6 +81,35 @@ python isp_codec.py add-var Projekt/Projekt.isp Liczenie licznik1 FB_Licznik
 python isp_codec.py add-var Projekt/Projekt.isp "Global Variables" Wynik INT --adres D100 --init 0 --encode
 ```
 
+## Kompilacja w otwartym ISPSoft (`isp_control.py`)
+Osobne narzędzie (Windows, tylko Python 3). Steruje **już otwartym** oknem ISPSoft: nie rusza myszy, nie wyciąga okna
+na wierzch, okno może być zminimalizowane.
+```
+python isp_control.py list                        # okna ISPSoft: pid, tytuł
+python isp_control.py open    PROJEKT.isp [--exe NewISPSoft.exe] [--timeout 60]  # nowa instancja ISPSoft z projektem
+python isp_control.py close   --pid N | --title T [--nie-zapisuj | --force]   # zamknięcie okna
+python isp_control.py compile [--pid N | --title T] [--out wynik.txt] [--timeout 60]
+python isp_control.py read    [--pid N | --title T] [--out wynik.txt]   # sam odczyt panelu Compile Message
+```
+- `compile` czyści listę Compile Message, wysyła kliknięcie w przycisk Compile (pasek PLC) i czeka, aż lista przestanie
+  się zmieniać. Wynik (błędy, ostrzeżenia, zużycie urządzeń) wypisuje na ekran i opcjonalnie zapisuje do pliku.
+- Kod wyjścia: 0 = bez błędów, 1 = są błędy kompilacji, 2 = błąd narzędzia (brak okna, brak wyniku).
+- Przy wielu otwartych oknach ISPSoft trzeba podać `--pid` albo `--title`. Każdy projekt w osobnej instancji ISPSoft
+  kompiluje się niezależnie, można to robić równolegle.
+- `open` uruchamia **nową instancję** ISPSoft z plikiem w argumencie wiersza poleceń (pełna ścieżka z `.isp`), nie ruszając
+  już otwartych okien, i wypisuje `pid` do użycia w `compile --pid`. Program znajduje w kolejności: `--exe`, zmienna
+  `ISPSOFT_DIR`, uruchomiony ISPSoft, najnowszy w `Program Files`. Jeśli ISPSoft pokaże okno dialogowe (np. brak pliku),
+  polecenie kończy się błędem z jego treścią. Nowe okno może na chwilę dostać fokus.
+  Tytuł okna to sama nazwa pliku (np. `PLC - Delta ISPSoft`), przy kilku projektach o tej samej nazwie używaj `--pid`.
+- `close` zamyka okno tak jak krzyżyk (`WM_CLOSE`). Wymaga `--pid` albo `--title` (bez nich odmawia, żeby nie zamknąć okna
+  użytkownika). Po kompilacji ISPSoft uznaje projekt za zmieniony i pyta o zapis: bez opcji `close` zgłasza błąd i zostawia
+  okno otwarte, `--nie-zapisuj` odpowiada „Nie” (plik `.isp` zostaje bez zmian), `--force` kończy proces bez pytania.
+- Świeże okno nie ma jeszcze listy komunikatów – `compile` tworzy ją pierwszym kliknięciem, a wynik szuka za każdym razem od nowa.
+- `compile` kompiluje projekt otwarty w oknie, także z niezapisanymi zmianami. Dialog otwarty w ISPSoft (np. „zapisać?”) blokuje wynik – wtedy polecenie kończy się błędem po `--timeout`.
+- Przycisk Compile jest wskazany współrzędnymi (`--x`, `--y`, domyślnie 133, 10 w pasku PLC, ISPSoft 3.24).
+  Przy innym układzie paska podaj inne wartości.
+- Antywirus (np. Bitdefender) może uznać skrypt za podejrzany (odczyt pamięci innego procesu) – wymaga wyjątku.
+
 ## Sieć CANopen (`cop_codec.py`)
 Osobne narzędzie do plików `.cop` (konfiguracja sieci CANopen z CANopen Builder). Opis formatu: `FORMAT_COP.md`.
 ```

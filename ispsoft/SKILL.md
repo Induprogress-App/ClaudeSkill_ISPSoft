@@ -36,6 +36,11 @@ Wymaga tylko Pythona 3 – uruchamiaj je jako `python "<katalog skilla>/isp_code
    i nie zapisuj własnych plików w `_autogen`. Nowy typ (DUT): `FORMAT_ISP.md`.
 5. Po zmianach `encode PROJEKT.isp`, a potem poproś użytkownika o otwarcie projektu w ISPSoft i **kompilację** –
    tylko ona potwierdza poprawność. Zgłoszone błędy kompilacji poprawiaj w plikach `_autogen`.
+   Możesz skompilować sam (tylko kopie testowe, nie projekty użytkownika bez jego zgody; Windows, ISPSoft zainstalowany):
+   `python isp_control.py open PROJEKT.isp` (nowa instancja, wypisuje pid), potem
+   `python isp_control.py compile --pid N [--out wynik.txt]` (opis: `README.md`). Nie rusza myszy ani okna na wierzchu,
+   kilka instancji kompiluje się równolegle. Kod wyjścia 1 = błędy kompilacji. Po skończeniu zamknij instancję otwartą
+   przez `open`: `python isp_control.py close --pid N --nie-zapisuj` (nie zamykaj okien użytkownika).
 6. Jeśli narzędzie odmawia (np. `.isp` zapisano w ISPSoft, a `_autogen` ma niezapisane zmiany, albo w `_autogen`
    są obce pliki), nie używaj `--force` bez zgody użytkownika – wyjaśnij, co zostałoby utracone.
 
