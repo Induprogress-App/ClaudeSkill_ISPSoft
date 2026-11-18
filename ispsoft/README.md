@@ -88,6 +88,9 @@ na wierzch, okno może być zminimalizowane.
 python isp_control.py list                        # okna ISPSoft: pid, tytuł
 python isp_control.py open    PROJEKT.isp [--exe NewISPSoft.exe] [--timeout 60]  # nowa instancja ISPSoft z projektem
 python isp_control.py close   --pid N | --title T [--nie-zapisuj | --force]   # zamknięcie okna
+python isp_control.py st-open NAZWA [--pid N]                         # otwarcie bloku/programu ST z drzewa projektu
+python isp_control.py st-get  [--blok N] [--od A --do B] [--out p.txt] # odczyt kodu ST z otwartego edytora
+python isp_control.py st-replace OD DO [--plik p.txt | --tekst "a\nb" | --usun] [--blok N]   # zamiana linii
 python isp_control.py compile [--pid N | --title T] [--out wynik.txt] [--timeout 60]
 python isp_control.py read    [--pid N | --title T] [--out wynik.txt]   # sam odczyt panelu Compile Message
 ```
@@ -104,6 +107,17 @@ python isp_control.py read    [--pid N | --title T] [--out wynik.txt]   # sam od
 - `close` zamyka okno tak jak krzyżyk (`WM_CLOSE`). Wymaga `--pid` albo `--title` (bez nich odmawia, żeby nie zamknąć okna
   użytkownika). Po kompilacji ISPSoft uznaje projekt za zmieniony i pyta o zapis: bez opcji `close` zgłasza błąd i zostawia
   okno otwarte, `--nie-zapisuj` odpowiada „Nie” (plik `.isp` zostaje bez zmian), `--force` kończy proces bez pytania.
+- `st-open`, `st-get`, `st-replace` pracują na kodzie ST (bloki funkcyjne i programy ST) **w otwartym oknie**, bez
+  zamykania i otwierania ISPSoft. `st-open` robi dwuklik w element drzewa projektu (programy LD odrzuca – ich edytor
+  nie jest tekstowy). `st-get` drukuje linie z numerami (cały tekst albo zakres `--od/--do`). `st-replace OD DO` zamienia
+  linie `OD..DO` na nowe (z `--plik`, `--tekst` z `\n` jako separatorem linii albo `--usun`); nowych linii może być
+  więcej lub mniej niż starych. `DO = OD-1` wstawia nowe linie przed linię `OD`. Typowy przebieg: błąd w linii 22 →
+  `st-get --od 20 --do 24` → `st-replace 21 22 --tekst "..."` → `compile`.
+- Edytor to `TSynEdit`: narzędzie czyta cały tekst, składa nowy i ustawia go jednym komunikatem (`WM_SETTEXT`), po czym
+  sprawdza odczytem; przy rozbieżności przywraca oryginał. Kursor i klawiatura nie biorą udziału (kliknięcie myszą
+  w tle ani Ctrl+Home nie działają w wiadomościach), więc nie ma znaczenia, gdzie użytkownik ustawił kursor. Skutki:
+  ustawienie tekstu resetuje kursor, przewinięcie i historię cofania (Ctrl+Z) tego edytora, a projekt w oknie jest
+  niezapisany, dopóki użytkownik go nie zapisze. Nie edytuj okna ręcznie w trakcie pracy narzędzia.
 - Świeże okno nie ma jeszcze listy komunikatów – `compile` tworzy ją pierwszym kliknięciem, a wynik szuka za każdym razem od nowa.
 - `compile` kompiluje projekt otwarty w oknie, także z niezapisanymi zmianami. Dialog otwarty w ISPSoft (np. „zapisać?”) blokuje wynik – wtedy polecenie kończy się błędem po `--timeout`.
 - Przycisk Compile jest wskazany współrzędnymi (`--x`, `--y`, domyślnie 133, 10 w pasku PLC, ISPSoft 3.24).

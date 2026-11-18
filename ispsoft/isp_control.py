@@ -7,6 +7,9 @@ Polecenia:
   close --pid N | --title T     zamkniecie okna ISPSoft ([--nie-zapisuj] odpowiada Nie na pytanie o zapis, [--force] konczy proces)
   compile [--pid N | --title T] kompilacja projektu otwartego w oknie i odczyt panelu Compile Message
   read    [--pid N | --title T] odczyt panelu Compile Message bez kompilacji
+  st-open NAZWA                 otwiera w oknie blok funkcyjny / program ST z drzewa projektu (dwuklik)
+  st-get [--blok N] [--od A --do B]            odczyt kodu ST z otwartego edytora (cale albo zakres linii)
+  st-replace OD DO [--plik|--tekst|--usun]     zamiana linii OD..DO na nowe (DO = OD-1: wstawienie przed linia OD)
 
 Dziala tylko w Windows, tylko biblioteka standardowa. Okno nie musi byc na wierzchu ani widoczne
 (moze byc zminimalizowane): polecenie Compile jest wysylane jako wiadomosci myszy do paska narzedzi,
@@ -50,6 +53,7 @@ MEM_COMMIT_RESERVE, MEM_RELEASE, PAGE_RW = 0x3000, 0x8000, 4
 # Przycisk Compile na pasku "PLC": punkt w wspolrzednych klienta paska (ustalone w ISPSoft 3.24).
 COMPILE_X, COMPILE_Y = 133, 10
 kernel32.QueryFullProcessImageNameW.argtypes = [wt.HANDLE, wt.DWORD, wt.LPWSTR, ctypes.POINTER(wt.DWORD)]
+WM_LBUTTONDBLCLK = 0x0203
 
 
 class Blad(Exception):
@@ -352,6 +356,231 @@ def cmd_close(a):
         kernel32.CloseHandle(proc)
 
 
+# ---------------------------------------------------------------------------------------------
+# Edycja kodu ST w otwartym oknie (blok funkcyjny / program ST). Edytor to TSynEdit: caly tekst czyta sie
+# przez WM_GETTEXT i ustawia przez WM_SETTEXT. Nie trzeba kursora, klawiatury ani schowka. Ustawienie tekstu
+# resetuje kursor, przewiniecie i historie cofania edytora; kompilator widzi zmiane od razu.
+# Kazda zmiana jest weryfikowana odczytem; przy rozbieznosci wraca oryginal.
+# ---------------------------------------------------------------------------------------------
+
+def edytor_st(glowne, blok=None):
+    """Zwraca (nazwa bloku, uchwyt TSynEdit) otwartego edytora ST."""
+    ramki = [d for d in dzieci(glowne) if klasa_okna(d) == "TChildFrm"]
+    if blok:
+        ramki = [d for d in ramki if tekst_okna(d).lower() == blok.lower()]
+    znalezione = []
+    for r in ramki:
+        eds = [d for d in dzieci(r) if klasa_okna(d) == "TSynEdit"]
+        if not eds:
+            continue
+
+        def pole(h):
+            rc = wt.RECT()
+            user32.GetWindowRect(h, ctypes.byref(rc))
+            return (rc.right - rc.left) * (rc.bottom - rc.top)
+
+        znalezione.append((tekst_okna(r), max(eds, key=pole)))
+    if not znalezione:
+        raise Blad("brak otwartego edytora ST%s (otworz go: st-open NAZWA)" % (" o nazwie '%s'" % blok if blok else ""))
+    if len(znalezione) > 1:
+        raise Blad("kilka otwartych edytorow ST, wskaz --blok: " + ", ".join(n for n, _ in znalezione))
+    return znalezione[0]
+
+
+def tekst_edytora(ed):
+    n = user32.SendMessageW(ed, 0x000E, 0, None)  # WM_GETTEXTLENGTH
+    buf = ctypes.create_unicode_buffer(n + 2)
+    user32.SendMessageW(ed, 0x000D, n + 1, ctypes.cast(buf, ctypes.c_void_p))  # WM_GETTEXT
+    return buf.value
+
+
+def ustaw_tekst(ed, tekst):
+    """Ustawia caly tekst edytora (WM_SETTEXT) i sprawdza odczytem. Zwraca True, gdy tekst zgadza sie z podanym."""
+    buf = ctypes.create_unicode_buffer(tekst)
+    user32.SendMessageW(ed, 0x000C, 0, ctypes.cast(buf, ctypes.c_void_p))  # WM_SETTEXT
+    start = time.time()
+    while time.time() - start < 5.0:
+        if tekst_edytora(ed) == tekst:
+            return True
+        time.sleep(0.1)
+    return tekst_edytora(ed) == tekst
+
+
+def zastap_linie(ed, od, do, nowe):
+    """Zamienia linie od..do (numeracja od 1) na liste nowych linii. do = od-1 oznacza wstawienie przed linia od.
+    Pusta lista nowych linii usuwa zakres. Zwraca (stary, nowy) tekst; przy bledzie przywraca oryginal."""
+    oryginal = tekst_edytora(ed)
+    linie = oryginal.split("\r\n")
+    n = len(linie)
+    if not (1 <= od <= n) or not (od - 1 <= do <= n):
+        raise Blad("zakres linii %d-%d poza tekstem (linii: %d)" % (od, do, n))
+    wynik = "\r\n".join(linie[:od - 1] + list(nowe) + linie[do:])
+    if not ustaw_tekst(ed, wynik):
+        ustaw_tekst(ed, oryginal)
+        raise Blad("edytor nie przyjal nowego tekstu - przywrocono oryginal")
+    return oryginal, wynik
+
+
+def drzewo_projektu(glowne):
+    """Zwraca uchwyt drzewa projektu (TTreeView z korzeniem 'Project [...]')."""
+    for d in dzieci(glowne):
+        if klasa_okna(d) == "TTreeView" and user32.IsWindowVisible(d):
+            drz = Drzewo(d)
+            try:
+                korzen = drz.nastepny(0, 0)  # TVGN_ROOT
+                if korzen and drz.tekst(korzen).lower().startswith("project ["):
+                    return d
+            finally:
+                drz.zamknij()
+    raise Blad("nie znaleziono drzewa projektu")
+
+
+class Drzewo:
+    """Odczyt elementow TreeView z cudzego procesu (proces 32-bitowy)."""
+
+    def __init__(self, hwnd):
+        self.hwnd = hwnd
+        self.proc = kernel32.OpenProcess(PROCESS_ALL, False, pid_okna(hwnd))
+        if not self.proc:
+            raise Blad("brak dostepu do procesu ISPSoft")
+        wow = wt.BOOL()
+        kernel32.IsWow64Process(self.proc, ctypes.byref(wow))
+        if not wow.value:
+            raise Blad("odczyt drzewa zaimplementowano tylko dla 32-bitowego ISPSoft")
+        self.mem = kernel32.VirtualAllocEx(self.proc, None, 4096, MEM_COMMIT_RESERVE, PAGE_RW)
+
+    def zamknij(self):
+        kernel32.VirtualFreeEx(self.proc, self.mem, 0, MEM_RELEASE)
+        kernel32.CloseHandle(self.proc)
+
+    def nastepny(self, h, kod):
+        return user32.SendMessageW(self.hwnd, 0x110A, kod, ctypes.c_void_p(h)) & 0xFFFFFFFF  # TVM_GETNEXTITEM
+
+    def tekst(self, h):
+        buf = self.mem + 256
+        tv = struct.pack("<IIIIIIIIII", 1, h, 0, 0, buf, 500, 0, 0, 0, 0)  # TVIF_TEXT
+        kernel32.WriteProcessMemory(self.proc, self.mem, tv, len(tv), None)
+        kernel32.WriteProcessMemory(self.proc, buf, b"\0" * 1000, 1000, None)
+        user32.SendMessageW(self.hwnd, 0x113E, 0, ctypes.c_void_p(self.mem))  # TVM_GETITEMW
+        wyj = ctypes.create_string_buffer(1000)
+        kernel32.ReadProcessMemory(self.proc, buf, wyj, 1000, None)
+        r = wyj.raw
+        if r[1:2] == b"\0" and r[0:1] != b"\0":
+            return r.decode("utf-16-le", "replace").split("\0")[0]
+        return r.split(b"\0")[0].decode("cp1250", "replace")
+
+    def szukaj(self, nazwa):
+        """Pierwszy element o tekscie 'nazwa' albo 'nazwa [typ,jezyk]'. Pomija galaz API (setki pozycji)."""
+        nazwa = nazwa.lower()
+
+        def idz(h):
+            while h:
+                t = self.tekst(h)
+                tl = t.lower()
+                if tl == nazwa or tl.startswith(nazwa + " ["):
+                    return h, t
+                if tl != "apis":
+                    c = self.nastepny(h, 4)  # TVGN_CHILD
+                    if c:
+                        wyn = idz(c)
+                        if wyn:
+                            return wyn
+                h = self.nastepny(h, 1)  # TVGN_NEXT
+            return None
+
+        return idz(self.nastepny(0, 0))
+
+    def prostokat(self, h):
+        user32.SendMessageW(self.hwnd, 0x1114, 0, ctypes.c_void_p(h))  # TVM_ENSUREVISIBLE
+        time.sleep(0.3)
+        kernel32.WriteProcessMemory(self.proc, self.mem, struct.pack("<I", h) + b"\0" * 12, 16, None)
+        if not user32.SendMessageW(self.hwnd, 0x1104, 1, ctypes.c_void_p(self.mem)):  # TVM_GETITEMRECT
+            raise Blad("nie mozna pobrac polozenia elementu drzewa")
+        wyj = ctypes.create_string_buffer(16)
+        kernel32.ReadProcessMemory(self.proc, self.mem, wyj, 16, None)
+        return struct.unpack("<iiii", wyj.raw)
+
+
+def cmd_st_open(a):
+    glowne = wybierz_okno(a.pid, a.title)
+    drz = Drzewo(drzewo_projektu(glowne))
+    try:
+        znaleziony = drz.szukaj(a.nazwa)
+        if not znaleziony:
+            raise Blad("w drzewie projektu nie ma elementu '%s'" % a.nazwa)
+        h, tekst = znaleziony
+        if "ld" in tekst.lower().split("[")[-1]:
+            raise Blad("'%s' to program LD - edytor LD nie jest tekstowy, st-open obsluguje tylko ST" % tekst)
+        l, t, r, b = drz.prostokat(h)
+    finally:
+        drz.zamknij()
+    x, y = (l + r) // 2, (t + b) // 2
+    lp = (y << 16) | (x & 0xFFFF)
+    for kom, wp in ((WM_MOUSEMOVE, 0), (WM_LBUTTONDOWN, 1), (WM_LBUTTONUP, 0), (WM_LBUTTONDBLCLK, 1), (WM_LBUTTONUP, 0)):
+        user32.PostMessageW(drzewo_projektu(glowne), kom, wp, lp)
+        time.sleep(0.1)
+    czysta = tekst.split(" [")[0]
+    start = time.time()
+    while time.time() - start < 15:
+        time.sleep(0.5)
+        try:
+            nazwa, _ed = edytor_st(glowne, czysta)
+            print("otwarto edytor: %s" % nazwa)
+            return 0
+        except Blad:
+            pass
+        for d in dialogi_procesu(pid_okna(glowne)):
+            raise Blad("ISPSoft pokazal okno '%s': %s" % (tekst_okna(d), tekst_dialogu(d)))
+    raise Blad("edytor '%s' nie otworzyl sie w 15 s" % czysta)
+
+
+def _zakres(a, n):
+    od = a.od or 1
+    do = a.do or n
+    if not (1 <= od <= do <= n):
+        raise Blad("zly zakres linii %d-%d (tekst ma %d linii)" % (od, do, n))
+    return od, do
+
+
+def cmd_st_get(a):
+    glowne = wybierz_okno(a.pid, a.title)
+    nazwa, ed = edytor_st(glowne, a.blok)
+    linie = tekst_edytora(ed).split("\r\n")
+    od, do = _zakres(a, len(linie))
+    wyj = ["%4d: %s" % (i, linie[i - 1]) for i in range(od, do + 1)]
+    print("[%s, linii: %d]" % (nazwa, len(linie)))
+    for w in wyj:
+        print(w)
+    if a.out:
+        with open(a.out, "w", encoding="utf-8", newline="") as f:
+            f.write("\r\n".join(linie[od - 1:do]) + "\r\n")
+    return 0
+
+
+def _nowe_linie(a):
+    if a.plik:
+        with open(a.plik, encoding="utf-8") as f:
+            tresc = f.read().replace("\r\n", "\n")
+        if tresc.endswith("\n"):
+            tresc = tresc[:-1]
+        return tresc.split("\n")
+    if a.tekst is not None:
+        return a.tekst.replace("\\n", "\n").split("\n")
+    if a.usun:
+        return []
+    raise Blad("podaj nowe linie: --plik, --tekst albo --usun (usuniecie zakresu)")
+
+
+def cmd_st_replace(a):
+    nowe = _nowe_linie(a)
+    glowne = wybierz_okno(a.pid, a.title)
+    nazwa, ed = edytor_st(glowne, a.blok)
+    stary, nowy = zastap_linie(ed, a.od, a.do, nowe)
+    sl, nl = stary.count("\r\n") + 1, nowy.count("\r\n") + 1
+    print("[%s] zamieniono linie %d-%d (%d nowych); linii w bloku: %d -> %d" % (nazwa, a.od, a.do, len(nowe), sl, nl))
+    return 0
+
+
 def cmd_list(_a):
     for h in okna_ispsoft():
         print("pid %d  hwnd %d  %s" % (pid_okna(h), h, tekst_okna(h)))
@@ -421,9 +650,32 @@ def main():
             p.add_argument("--timeout", type=int, default=60)
             p.add_argument("--x", type=int, default=COMPILE_X)
             p.add_argument("--y", type=int, default=COMPILE_Y)
+    for nazwa in ("st-open", "st-get", "st-replace"):
+        p = sub.add_parser(nazwa)
+        p.add_argument("--pid", type=int)
+        p.add_argument("--title")
+        if nazwa == "st-open":
+            p.add_argument("nazwa", help="nazwa bloku funkcyjnego / programu ST z drzewa projektu, np. CAN_SDO")
+        else:
+            p.add_argument("--blok", help="nazwa otwartego edytora (potrzebna, gdy otwartych jest kilka)")
+        if nazwa == "st-get":
+            p.add_argument("--od", type=int, help="pierwsza linia (domyslnie 1)")
+            p.add_argument("--do", type=int, help="ostatnia linia (domyslnie ostatnia)")
+            p.add_argument("--out", help="zapisz odczytane linie do pliku UTF-8")
+        if nazwa == "st-replace":
+            p.add_argument("od", type=int, help="pierwsza zamieniana linia (od 1)")
+            p.add_argument("do", type=int, help="ostatnia zamieniana linia; do = od-1 oznacza wstawienie przed linia od")
+            p.add_argument("--plik", help="plik UTF-8 z nowymi liniami")
+            p.add_argument("--tekst", help="nowe linie w parametrze, rozdzielone \\n")
+            p.add_argument("--usun", action="store_true", help="usun zakres (bez nowych linii)")
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except Exception:
+        pass
     a = ap.parse_args()
     try:
-        return {"list": cmd_list, "open": cmd_open, "close": cmd_close, "compile": cmd_compile, "read": cmd_read}[a.cmd](a)
+        return {"list": cmd_list, "open": cmd_open, "close": cmd_close, "compile": cmd_compile, "read": cmd_read,
+                "st-open": cmd_st_open, "st-get": cmd_st_get, "st-replace": cmd_st_replace}[a.cmd](a)
     except Blad as e:
         print("BLAD: %s" % e, file=sys.stderr)
         return 2
