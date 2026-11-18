@@ -720,7 +720,7 @@ def main():
         p.add_argument("--pid", type=int)
         p.add_argument("--title")
         if nazwa == "st-open":
-            p.add_argument("nazwa", help="nazwa bloku funkcyjnego / programu ST z drzewa projektu, np. CAN_SDO")
+            p.add_argument("nazwa", help="nazwa bloku funkcyjnego / programu ST z drzewa projektu, np. FB_Licznik")
         else:
             p.add_argument("--blok", help="nazwa otwartego edytora (potrzebna, gdy otwartych jest kilka)")
         if nazwa == "st-get":
