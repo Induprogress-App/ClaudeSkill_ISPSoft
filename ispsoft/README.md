@@ -88,6 +88,7 @@ na wierzch, okno może być zminimalizowane.
 python isp_control.py list                        # okna ISPSoft: pid, tytuł
 python isp_control.py open    PROJEKT.isp [--exe NewISPSoft.exe] [--timeout 60]  # nowa instancja ISPSoft z projektem
 python isp_control.py close   --pid N | --title T [--nie-zapisuj | --force]   # zamknięcie okna
+python isp_control.py save    [--pid N | --title T]                   # zapis projektu (ikona Save)
 python isp_control.py st-open NAZWA [--pid N]                         # otwarcie bloku/programu ST z drzewa projektu
 python isp_control.py st-get  [--blok N] [--od A --do B] [--out p.txt] # odczyt kodu ST z otwartego edytora
 python isp_control.py st-replace OD DO [--plik p.txt | --tekst "a\nb" | --usun] [--blok N]   # zamiana linii
@@ -107,6 +108,9 @@ python isp_control.py read    [--pid N | --title T] [--out wynik.txt]   # sam od
 - `close` zamyka okno tak jak krzyżyk (`WM_CLOSE`). Wymaga `--pid` albo `--title` (bez nich odmawia, żeby nie zamknąć okna
   użytkownika). Po kompilacji ISPSoft uznaje projekt za zmieniony i pyta o zapis: bez opcji `close` zgłasza błąd i zostawia
   okno otwarte, `--nie-zapisuj` odpowiada „Nie” (plik `.isp` zostaje bez zmian), `--force` kończy proces bez pytania.
+- `save` klika ikonę Save na pasku „Standard”, a poprawność sprawdza po zmianie czasu lub rozmiaru pliku `.isp` na dysku
+  (ścieżkę czyta z korzenia drzewa projektu). **Nadpisuje plik projektu** – używać świadomie, najlepiej na kopii.
+  Projekt bez zmian lub bez pliku na dysku (nowy, bez Save As) kończy się błędem. Po zapisie `close` nie pyta już o zapis.
 - `st-open`, `st-get`, `st-replace` pracują na kodzie ST (bloki funkcyjne i programy ST) **w otwartym oknie**, bez
   zamykania i otwierania ISPSoft. `st-open` robi dwuklik w element drzewa projektu (programy LD odrzuca – ich edytor
   nie jest tekstowy). `st-get` drukuje linie z numerami (cały tekst albo zakres `--od/--do`). `st-replace OD DO` zamienia

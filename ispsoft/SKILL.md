@@ -41,7 +41,8 @@ Wymaga tylko Pythona 3 – uruchamiaj je jako `python "<katalog skilla>/isp_code
    `python isp_control.py compile --pid N [--out wynik.txt]` (opis: `README.md`). Nie rusza myszy ani okna na wierzchu,
    kilka instancji kompiluje się równolegle. Kod wyjścia 1 = błędy kompilacji. Kod ST bloku otwartego w oknie można czytać i poprawiać wprost:
    `st-open NAZWA`, `st-get --od A --do B`, `st-replace OD DO --tekst "..."` (potem `compile`) – bez zamykania ISPSoft;
-   zmiana jest tylko w oknie, dopóki użytkownik nie zapisze projektu (opis i ograniczenia: `README.md`).
+   zmiana jest tylko w oknie, dopóki nie zapiszesz projektu (`save` nadpisuje plik `.isp` – tylko za zgodą użytkownika
+   albo na kopii; opis i ograniczenia: `README.md`).
    Po skończeniu zamknij instancję otwartą
    przez `open`: `python isp_control.py close --pid N --nie-zapisuj` (nie zamykaj okien użytkownika).
 6. Jeśli narzędzie odmawia (np. `.isp` zapisano w ISPSoft, a `_autogen` ma niezapisane zmiany, albo w `_autogen`

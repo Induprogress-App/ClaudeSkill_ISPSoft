@@ -7,6 +7,7 @@ Polecenia:
   close --pid N | --title T     zamkniecie okna ISPSoft ([--nie-zapisuj] odpowiada Nie na pytanie o zapis, [--force] konczy proces)
   compile [--pid N | --title T] kompilacja projektu otwartego w oknie i odczyt panelu Compile Message
   read    [--pid N | --title T] odczyt panelu Compile Message bez kompilacji
+  save [--pid N | --title T]    zapis projektu (ikona Save), sprawdzany po zmianie pliku .isp na dysku
   st-open NAZWA                 otwiera w oknie blok funkcyjny / program ST z drzewa projektu (dwuklik)
   st-get [--blok N] [--od A --do B]            odczyt kodu ST z otwartego edytora (cale albo zakres linii)
   st-replace OD DO [--plik|--tekst|--usun]     zamiana linii OD..DO na nowe (DO = OD-1: wstawienie przed linia OD)
@@ -52,6 +53,8 @@ MEM_COMMIT_RESERVE, MEM_RELEASE, PAGE_RW = 0x3000, 0x8000, 4
 
 # Przycisk Compile na pasku "PLC": punkt w wspolrzednych klienta paska (ustalone w ISPSoft 3.24).
 COMPILE_X, COMPILE_Y = 133, 10
+# Ikona Save (dyskietka) na pasku "Standard", wspolrzedne klienta paska (ISPSoft 3.24).
+SAVE_X, SAVE_Y = 66, 11
 kernel32.QueryFullProcessImageNameW.argtypes = [wt.HANDLE, wt.DWORD, wt.LPWSTR, ctypes.POINTER(wt.DWORD)]
 WM_LBUTTONDBLCLK = 0x0203
 
@@ -424,11 +427,10 @@ def zastap_linie(ed, od, do, nowe):
 def drzewo_projektu(glowne):
     """Zwraca uchwyt drzewa projektu (TTreeView z korzeniem 'Project [...]')."""
     for d in dzieci(glowne):
-        if klasa_okna(d) == "TTreeView" and user32.IsWindowVisible(d):
+        if klasa_okna(d) == "TTreeView":  # bez warunku widocznosci: okno zminimalizowane ma ukryte formularze
             drz = Drzewo(d)
             try:
-                korzen = drz.nastepny(0, 0)  # TVGN_ROOT
-                if korzen and drz.tekst(korzen).lower().startswith("project ["):
+                if drz.korzen_projektu():
                     return d
             finally:
                 drz.zamknij()
@@ -452,6 +454,20 @@ class Drzewo:
     def zamknij(self):
         kernel32.VirtualFreeEx(self.proc, self.mem, 0, MEM_RELEASE)
         kernel32.CloseHandle(self.proc)
+
+    def korzen_projektu(self):
+        """Element 'Project [...]' (najwyzszy poziom albo dziecko pierwszego elementu, np. 'NWCONFIG') albo 0."""
+        h = self.nastepny(0, 0)  # TVGN_ROOT
+        while h:
+            if self.tekst(h).lower().startswith("project ["):
+                return h
+            c = self.nastepny(h, 4)  # TVGN_CHILD: w swiezej instancji korzen projektu moze byc dzieckiem 'NWCONFIG'
+            while c:
+                if self.tekst(c).lower().startswith("project ["):
+                    return c
+                c = self.nastepny(c, 1)
+            h = self.nastepny(h, 1)  # TVGN_NEXT
+        return 0
 
     def nastepny(self, h, kod):
         return user32.SendMessageW(self.hwnd, 0x110A, kod, ctypes.c_void_p(h)) & 0xFFFFFFFF  # TVM_GETNEXTITEM
@@ -499,6 +515,49 @@ class Drzewo:
         wyj = ctypes.create_string_buffer(16)
         kernel32.ReadProcessMemory(self.proc, self.mem, wyj, 16, None)
         return struct.unpack("<iiii", wyj.raw)
+
+
+def sciezka_projektu(glowne):
+    """Sciezka pliku .isp odczytana z korzenia drzewa projektu ('Project [E:\\\\...\\\\X.isp]')."""
+    drz = Drzewo(drzewo_projektu(glowne))
+    try:
+        korzen = drz.tekst(drz.korzen_projektu())
+    finally:
+        drz.zamknij()
+    pocz, kon = korzen.find("["), korzen.rfind("]")
+    if pocz < 0 or kon < pocz:
+        raise Blad("nie mozna odczytac sciezki projektu z drzewa ('%s')" % korzen)
+    return korzen[pocz + 1:kon]
+
+
+def cmd_save(a):
+    """Zapisuje projekt (ikona Save na pasku Standard) i sprawdza po zmianie pliku na dysku."""
+    import os
+    glowne = wybierz_okno(a.pid, a.title)
+    sciezka = sciezka_projektu(glowne)
+    if not os.path.isfile(sciezka):
+        raise Blad("projekt nie ma jeszcze pliku na dysku (%s) - zapisz go najpierw w ISPSoft (Save As)" % sciezka)
+    pasek = None
+    for d in dzieci(glowne):
+        if klasa_okna(d) == "TdxBarControl" and tekst_okna(d) == "Standard":
+            pasek = d
+    if not pasek:
+        raise Blad("nie znaleziono paska narzedzi Standard")
+    przed = os.stat(sciezka)
+    kliknij(pasek, a.x, a.y)
+    start = time.time()
+    while time.time() - start < a.timeout:
+        time.sleep(0.5)
+        po = os.stat(sciezka)
+        if po.st_mtime_ns != przed.st_mtime_ns or po.st_size != przed.st_size:
+            time.sleep(1.0)  # chwila na dokonczenie zapisu
+            po = os.stat(sciezka)
+            print("zapisano: %s (%d B, %s)" % (sciezka, po.st_size, time.strftime("%H:%M:%S", time.localtime(po.st_mtime))))
+            return 0
+        for d in dialogi_procesu(pid_okna(glowne)):
+            raise Blad("ISPSoft pokazal okno '%s': %s" % (tekst_okna(d), tekst_dialogu(d)))
+    raise Blad("plik %s nie zmienil sie w %d s (projekt bez zmian albo przycisk Save w innym miejscu - sprawdz --x/--y)"
+               % (sciezka, a.timeout))
 
 
 def cmd_st_open(a):
@@ -650,6 +709,12 @@ def main():
             p.add_argument("--timeout", type=int, default=60)
             p.add_argument("--x", type=int, default=COMPILE_X)
             p.add_argument("--y", type=int, default=COMPILE_Y)
+    ps = sub.add_parser("save")
+    ps.add_argument("--pid", type=int)
+    ps.add_argument("--title")
+    ps.add_argument("--timeout", type=int, default=30)
+    ps.add_argument("--x", type=int, default=SAVE_X)
+    ps.add_argument("--y", type=int, default=SAVE_Y)
     for nazwa in ("st-open", "st-get", "st-replace"):
         p = sub.add_parser(nazwa)
         p.add_argument("--pid", type=int)
@@ -675,7 +740,7 @@ def main():
     a = ap.parse_args()
     try:
         return {"list": cmd_list, "open": cmd_open, "close": cmd_close, "compile": cmd_compile, "read": cmd_read,
-                "st-open": cmd_st_open, "st-get": cmd_st_get, "st-replace": cmd_st_replace}[a.cmd](a)
+                "save": cmd_save, "st-open": cmd_st_open, "st-get": cmd_st_get, "st-replace": cmd_st_replace}[a.cmd](a)
     except Blad as e:
         print("BLAD: %s" % e, file=sys.stderr)
         return 2
